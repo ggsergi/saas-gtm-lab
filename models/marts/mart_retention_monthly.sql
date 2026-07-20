@@ -16,7 +16,7 @@ WITH snapshot AS (
 -- get misread as churn in one segment and new business in another.
 cohort AS (
     SELECT
-        prior.month_start + INTERVAL 1 MONTH AS metric_month,
+        CAST(prior.month_start + INTERVAL 1 MONTH AS DATE) AS metric_month,
         prior.account_id,
         prior.industry,
         prior.country,
@@ -38,12 +38,12 @@ SELECT
     country,
     plan_tier,
     COUNT(*) AS starting_accounts,
-    SUM(starting_mrr) AS starting_mrr,
-    SUM(COALESCE(ending_mrr, 0)) AS ending_mrr,
+    CAST(SUM(starting_mrr) AS BIGINT) AS starting_mrr,
+    CAST(SUM(COALESCE(ending_mrr, 0)) AS BIGINT) AS ending_mrr,
     SUM(COALESCE(ending_mrr, 0)) / NULLIF(SUM(starting_mrr), 0) AS nrr,
-    SUM(CASE WHEN churned_flag THEN 1 ELSE 0 END) AS churned_accounts,
+    CAST(SUM(CASE WHEN churned_flag THEN 1 ELSE 0 END) AS BIGINT) AS churned_accounts,
     SUM(CASE WHEN churned_flag THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0) AS churn_rate_accounts,
-    SUM(CASE WHEN churned_flag THEN starting_mrr ELSE 0 END) AS churned_mrr,
+    CAST(SUM(CASE WHEN churned_flag THEN starting_mrr ELSE 0 END) AS BIGINT) AS churned_mrr,
     SUM(CASE WHEN churned_flag THEN starting_mrr ELSE 0 END) / NULLIF(SUM(starting_mrr), 0) AS churn_rate_mrr
 FROM cohort
 GROUP BY metric_month, industry, country, plan_tier

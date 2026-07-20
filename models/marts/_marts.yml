@@ -165,17 +165,48 @@ models:
       table (SUM(ending_mrr) / SUM(starting_mrr) where starting_mrr > 0) is
       ~1.004, i.e. a sane ~100% at the aggregate level; only fine-grained
       cuts are noisy.
+
+
+      Contract note: metric_month is explicitly CAST to DATE and the MRR/
+      count SUM columns (starting_mrr, ending_mrr, churned_mrr,
+      churned_accounts) are explicitly CAST to BIGINT in the model. Without
+      those casts DuckDB returns TIMESTAMP for date arithmetic and HUGEINT
+      (128-bit) for SUM() over integers by default - both technically
+      correct but wider/more surprising than needed here, so we narrow them
+      explicitly rather than let the contract just document whatever
+      DuckDB happens to infer.
+    config:
+      contract:
+        enforced: true
     columns:
       - name: metric_month
         description: The month (M) being measured. NRR/churn compare this month's cohort MRR against the same cohort's MRR in the prior month.
+        data_type: date
         data_tests:
           - not_null
+      - name: industry
+        description: Account industry, as of the M-1 cohort snapshot.
+        data_type: varchar
+      - name: country
+        description: Account country, as of the M-1 cohort snapshot.
+        data_type: varchar
+      - name: plan_tier
+        description: Subscription plan tier, as of the M-1 cohort snapshot.
+        data_type: varchar
       - name: starting_accounts
         description: Number of accounts in the cohort (active in the prior month).
+        data_type: bigint
         data_tests:
           - not_null
+      - name: starting_mrr
+        description: Sum of the cohort's MRR in the prior month (M-1).
+        data_type: bigint
+      - name: ending_mrr
+        description: Sum of the cohort's MRR in metric_month (M); 0 for accounts with no covering subscription that month.
+        data_type: bigint
       - name: nrr
         description: Net revenue retention for the cohort - ending_mrr / starting_mrr.
+        data_type: double
         data_tests:
           - dbt_expectations.expect_column_values_to_be_between:
               arguments:
@@ -183,13 +214,23 @@ models:
                 max_value: 5
               config:
                 severity: warn
+      - name: churned_accounts
+        description: Number of cohort accounts absent (no covering subscription) in metric_month.
+        data_type: bigint
       - name: churn_rate_accounts
         description: Share of the cohort's accounts absent (no covering subscription) in metric_month.
+        data_type: double
         data_tests:
           - dbt_expectations.expect_column_values_to_be_between:
               arguments:
                 min_value: 0
                 max_value: 1
+      - name: churned_mrr
+        description: Sum of starting_mrr belonging to accounts that churned in metric_month.
+        data_type: bigint
+      - name: churn_rate_mrr
+        description: Revenue churn rate - churned_mrr / starting_mrr.
+        data_type: double
 
   - name: mart_churn_profile
     description: >
@@ -209,22 +250,29 @@ models:
       event date. fct_subscriptions.downgrade_flag is a boolean with no
       date, so that baseline cannot be built from data available in this
       project.
+    config:
+      contract:
+        enforced: true
     columns:
       - name: reason_code
         description: Stated reason for the churn.
+        data_type: varchar
         data_tests:
           - accepted_values:
               arguments:
                 values: ['pricing', 'support', 'features', 'competitor', 'budget', 'unknown']
       - name: preceding_downgrade_flag
         description: Whether the account had a downgrade within 90 days before this churn event.
+        data_type: boolean
         data_tests:
           - not_null
       - name: churn_event_count
         description: Number of churn events in this slice.
+        data_type: bigint
         data_tests:
           - not_null
       - name: distinct_account_count
         description: Number of distinct accounts in this slice (differs from churn_event_count when accounts reactivate and churn more than once).
+        data_type: bigint
         data_tests:
           - not_null
