@@ -1,0 +1,59 @@
+name: 'ravenstack'
+version: '1.0.0'
+
+profile: 'ravenstack'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  ravenstack:
+    +materialized: view
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: table
+    marts:
+      +materialized: table
+
+vars:
+  # Dataset snapshot cutoff: subscriptions with a NULL end_date are treated
+  # as active through this date (max date observed across all seeds), not
+  # through the real "today". See archive/README.md for the dataset range.
+  retention_as_of_date: '2024-12-31'
+
+seeds:
+  ravenstack:
+    accounts:
+      +column_types:
+        account_id: varchar
+        signup_date: date
+    subscriptions:
+      +column_types:
+        subscription_id: varchar
+        account_id: varchar
+        start_date: date
+        end_date: date
+    feature_usage:
+      +column_types:
+        usage_id: varchar
+        subscription_id: varchar
+        usage_date: date
+    support_tickets:
+      +column_types:
+        ticket_id: varchar
+        account_id: varchar
+        submitted_at: timestamp
+        closed_at: timestamp
+    churn_events:
+      +column_types:
+        churn_event_id: varchar
+        account_id: varchar
+        churn_date: date

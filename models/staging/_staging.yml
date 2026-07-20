@@ -1,0 +1,142 @@
+version: 2
+
+models:
+  - name: stg_ravenstack__accounts
+    description: One row per RavenStack account (customer), as signed up.
+    columns:
+      - name: account_id
+        description: Primary key for the account.
+        data_tests:
+          - unique
+          - not_null
+      - name: industry
+        description: SaaS vertical the account belongs to.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Cybersecurity', 'DevTools', 'EdTech', 'FinTech', 'HealthTech']
+      - name: referral_source
+        description: Channel through which the account was acquired.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['organic', 'ads', 'event', 'partner', 'other']
+      - name: plan_tier
+        description: Initial plan tier at signup.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Basic', 'Pro', 'Enterprise']
+      - name: seats
+        description: Licensed user count at signup.
+        data_tests:
+          - not_null
+
+  - name: stg_ravenstack__subscriptions
+    description: One row per subscription contract. An account can have multiple subscriptions over time.
+    columns:
+      - name: subscription_id
+        description: Primary key for the subscription.
+        data_tests:
+          - unique
+          - not_null
+      - name: account_id
+        description: Foreign key to stg_ravenstack__accounts.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_ravenstack__accounts')
+                field: account_id
+      - name: plan_tier
+        description: Plan tier at time of billing.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Basic', 'Pro', 'Enterprise']
+      - name: billing_frequency
+        description: Whether the subscription bills monthly or annually.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['monthly', 'annual']
+
+  - name: stg_ravenstack__feature_usage
+    description: >
+      One row per feature usage event, tied to a subscription. The grain is
+      NOT usage_id alone: the source data has 21 usage_id values reused
+      across genuinely different events (different subscription_id, date and
+      feature), so usage_id is not a valid primary key on its own. The real
+      primary key is the composite (usage_id, subscription_id), which is
+      unique across all 25,000 rows.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - usage_id
+              - subscription_id
+    columns:
+      - name: usage_id
+        description: >
+          Part of the composite primary key (see model description). Not
+          unique by itself.
+        data_tests:
+          - not_null
+      - name: subscription_id
+        description: >
+          Part of the composite primary key (see model description). Also a
+          foreign key to stg_ravenstack__subscriptions.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_ravenstack__subscriptions')
+                field: subscription_id
+
+  - name: stg_ravenstack__support_tickets
+    description: One row per support ticket raised by an account.
+    columns:
+      - name: ticket_id
+        description: Primary key for the ticket.
+        data_tests:
+          - unique
+          - not_null
+      - name: account_id
+        description: Foreign key to stg_ravenstack__accounts.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_ravenstack__accounts')
+                field: account_id
+      - name: priority
+        description: Ticket priority level.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['low', 'medium', 'high', 'urgent']
+      - name: satisfaction_score
+        description: '{{ doc("stg_support_tickets__satisfaction_score") }}'
+
+  - name: stg_ravenstack__churn_events
+    description: One row per churn event for an account. An account can churn and reactivate more than once.
+    columns:
+      - name: churn_event_id
+        description: Primary key for the churn event.
+        data_tests:
+          - unique
+          - not_null
+      - name: account_id
+        description: Foreign key to stg_ravenstack__accounts.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_ravenstack__accounts')
+                field: account_id
+      - name: reason_code
+        description: Stated reason for the churn.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['pricing', 'support', 'features', 'competitor', 'budget', 'unknown']

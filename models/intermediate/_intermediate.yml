@@ -1,0 +1,74 @@
+version: 2
+
+models:
+  - name: int_subscriptions_monthly
+    description: >
+      One row per account per calendar month, representing that account's
+      "current" subscription state (plan_tier, mrr_amount, seats) for the
+      month. Grain: (account_id, month_start). Feeds mart_retention_monthly.
+
+
+      Why this model exists (data quality finding): raw fct_subscriptions
+      cannot be summed directly to get monthly MRR. Each account has between
+      2 and 19 subscription rows (avg. 10), and 90% of all subscription rows
+      (4,514 / 5,000) have a NULL end_date. Taken at face value, that means
+      most accounts have several subscriptions "active" at the same time,
+      often with very different plan_tier and mrr_amount values (including
+      many at $0). Summing mrr_amount across all of an account's open-ended
+      subscriptions gives a total MRR across the whole dataset of ~$10.16M;
+      taking only each account's most-recently-started subscription gives
+      ~$1.24M instead — an 8x difference depending on interpretation.
+
+
+      We do not believe this reflects real concurrent billing (e.g. one
+      account genuinely paying for Basic + Pro + Enterprise at once). It
+      reads as the "null fields" / "mid-cycle plan changes" edge cases the
+      dataset generator intentionally injects (see archive/README.md):
+      superseded subscriptions whose end_date was never backfilled when a
+      new one started.
+
+
+      Resolution used here (SCD-style, "latest start_date wins"): for each
+      account and month, we take all subscriptions whose own start_date /
+      end_date range covers that month (so real churn - a gap with no
+      covering subscription - is still respected), and among those we keep
+      only the one with the most recent start_date. Superseded subscriptions
+      with a stale NULL end_date are discarded in favor of whichever
+      subscription actually started most recently. This was a deliberate
+      choice over summing all "active" rows, which would overstate MRR by
+      roughly 8x based on the numbers above.
+
+
+      Limitation: this still assumes at most one subscription per account is
+      "real" at a time. If an account legitimately runs concurrent
+      subscriptions for different products, this model would incorrectly
+      collapse them into one. We have no column to distinguish that case
+      from a stale/superseded row, so it cannot be verified from the data
+      available.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - account_id
+              - month_start
+    columns:
+      - name: month_start
+        description: First day of the calendar month this snapshot represents.
+        data_tests:
+          - not_null
+      - name: account_id
+        description: Foreign key to dim_accounts.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+      - name: subscription_id
+        description: The subscription selected as "current" for this account and month (see model description).
+        data_tests:
+          - not_null
+      - name: mrr_amount
+        description: MRR of the selected subscription for this month.
+        data_tests:
+          - not_null

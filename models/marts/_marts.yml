@@ -1,0 +1,230 @@
+version: 2
+
+models:
+  - name: dim_accounts
+    description: One row per RavenStack account. Grain matches stg_ravenstack__accounts.
+    data_tests:
+      - dbt_utils.equal_rowcount:
+          arguments:
+            compare_model: ref('stg_ravenstack__accounts')
+    columns:
+      - name: account_id
+        description: Primary key for the account.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: fct_subscriptions
+    description: One row per subscription contract.
+    columns:
+      - name: subscription_id
+        description: Primary key for the subscription.
+        data_tests:
+          - unique
+          - not_null
+      - name: account_id
+        description: Foreign key to dim_accounts.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+      - name: mrr_amount
+        description: Monthly recurring revenue for this subscription.
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+              config:
+                severity: warn
+
+  - name: fct_feature_usage
+    description: >
+      One row per feature usage event. The grain is NOT usage_id alone: the
+      source data has 21 usage_id values reused across genuinely different
+      events (different subscription_id, date and feature), so usage_id is
+      not a valid primary key on its own. The real primary key is the
+      composite (usage_id, subscription_id), which is unique across all
+      25,000 rows.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - usage_id
+              - subscription_id
+    columns:
+      - name: usage_id
+        description: >
+          Part of the composite primary key (see model description). Not
+          unique by itself.
+        data_tests:
+          - not_null
+      - name: subscription_id
+        description: >
+          Part of the composite primary key (see model description). Also a
+          foreign key to fct_subscriptions.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_subscriptions')
+                field: subscription_id
+
+  - name: fct_support_tickets
+    description: One row per support ticket.
+    columns:
+      - name: ticket_id
+        description: Primary key for the ticket.
+        data_tests:
+          - unique
+          - not_null
+      - name: account_id
+        description: Foreign key to dim_accounts.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+
+  - name: fct_churn_events
+    description: >
+      One row per churn event. Some accounts have more than one (175
+      accounts have 2+ churn_events, matching the dataset's ~10%
+      reactivation rate) - COUNT(DISTINCT account_id) and COUNT(*) are not
+      interchangeable here.
+
+
+      Known limitation: this table cannot be reliably joined to
+      fct_subscriptions by account_id + nearest date to get "the MRR / plan
+      lost at churn". Verified: only 7 of 601 churn_events match a
+      subscription with churn_flag=true AND an exact end_date = churn_date;
+      even matching on ANY churned subscription for the account (no date
+      requirement), 214 of 600 churn events find no match at all; and 128
+      accounts have more than one churned subscription, making the match
+      ambiguous where it does exist. mart_churn_profile therefore reports
+      only counts/reason_code/preceding_downgrade_flag from this table
+      directly, with no MRR or plan_tier breakdown.
+    columns:
+      - name: churn_event_id
+        description: Primary key for the churn event.
+        data_tests:
+          - unique
+          - not_null
+      - name: account_id
+        description: Foreign key to dim_accounts.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+
+  - name: mart_retention_monthly
+    description: >
+      Net Revenue Retention (NRR) and churn rate, one row per
+      (metric_month, industry, country, plan_tier). Answers "how is
+      retention doing" broken down by segment and month.
+
+
+      Methodology: for each month M, the cohort is every account present in
+      int_subscriptions_monthly in month M-1 ("starting"). industry,
+      country and plan_tier are all taken from the account's M-1 state, not
+      its current one, so a mid-period plan or segment change is tracked as
+      revenue moving within the same cohort row rather than showing up as
+      churn in the old segment and new business in the new one.
+      starting_mrr / starting_accounts describe that cohort at M-1;
+      ending_mrr is the same accounts' MRR at M (0 if they have no covering
+      subscription that month, i.e. churned). nrr = ending_mrr /
+      starting_mrr. The most recent month in the data is excluded, since
+      there is no M+1 yet to evaluate it against (right-censored).
+
+
+      Depends on int_subscriptions_monthly for its account-month MRR figure
+      - see that model's description for why a plain SUM(mrr_amount) over
+      "active" subscriptions was rejected (8x overstatement) in favor of a
+      one-subscription-per-account-per-month resolution.
+
+
+      Known limitation: because mrr_amount is a single value per
+      subscription rather than a true time series, this NRR is a net figure
+      only - it cannot be split into expansion vs. contraction components
+      (see int_subscriptions_monthly / fct_subscriptions for why: upgrade_flag
+      and downgrade_flag record that a change happened, not the MRR before
+      and after it).
+
+
+      Small-cohort noise: at this grain (month x industry x country x
+      plan_tier), 577 of 1,386 rows have only 1 starting account, so a
+      single account's MRR change can produce NRR values far outside a
+      normal range (e.g. one account going from $38 to $7,960 MRR reads as
+      NRR = 209x). This is mathematically correct, not a bug - the
+      nrr_between test below warns on it deliberately so it isn't mistaken
+      for a healthy segment. The overall MRR-weighted NRR across the whole
+      table (SUM(ending_mrr) / SUM(starting_mrr) where starting_mrr > 0) is
+      ~1.004, i.e. a sane ~100% at the aggregate level; only fine-grained
+      cuts are noisy.
+    columns:
+      - name: metric_month
+        description: The month (M) being measured. NRR/churn compare this month's cohort MRR against the same cohort's MRR in the prior month.
+        data_tests:
+          - not_null
+      - name: starting_accounts
+        description: Number of accounts in the cohort (active in the prior month).
+        data_tests:
+          - not_null
+      - name: nrr
+        description: Net revenue retention for the cohort - ending_mrr / starting_mrr.
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 5
+              config:
+                severity: warn
+      - name: churn_rate_accounts
+        description: Share of the cohort's accounts absent (no covering subscription) in metric_month.
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: mart_churn_profile
+    description: >
+      One row per (reason_code, preceding_downgrade_flag), with the count of
+      churn events and distinct accounts. Answers "what's driving churn"
+      (Q2) and "does a recent downgrade precede churn" (Q3) using only
+      fields native to fct_churn_events - see that model's description for
+      why MRR and plan_tier are not included here.
+
+
+      Q3 caveat: preceding_downgrade_flag here only describes accounts that
+      already churned - it is a distribution within churners (e.g. "8.8% of
+      churn events were preceded by a downgrade"), not a true churn-rate
+      ratio against a non-churned baseline. A real ratio would need to know,
+      for the full account population, who had a downgrade in a trailing
+      90-day window regardless of outcome - which requires a downgrade
+      event date. fct_subscriptions.downgrade_flag is a boolean with no
+      date, so that baseline cannot be built from data available in this
+      project.
+    columns:
+      - name: reason_code
+        description: Stated reason for the churn.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['pricing', 'support', 'features', 'competitor', 'budget', 'unknown']
+      - name: preceding_downgrade_flag
+        description: Whether the account had a downgrade within 90 days before this churn event.
+        data_tests:
+          - not_null
+      - name: churn_event_count
+        description: Number of churn events in this slice.
+        data_tests:
+          - not_null
+      - name: distinct_account_count
+        description: Number of distinct accounts in this slice (differs from churn_event_count when accounts reactivate and churn more than once).
+        data_tests:
+          - not_null

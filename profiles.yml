@@ -1,0 +1,7 @@
+ravenstack:
+  outputs:
+    dev:
+      type: duckdb
+      path: ravenstack.duckdb
+      threads: 4
+  target: dev
