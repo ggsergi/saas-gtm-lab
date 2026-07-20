@@ -53,6 +53,9 @@ Solo 7 de 601 eventos de churn coinciden con una fecha exacta de fin de suscripc
 ### 4. Ruido de NRR en cortes muy finos
 A nivel de mes × industry × país × plan_tier, cohortes muy pequeñas (una sola cuenta) pueden producir valores de NRR matemáticamente correctos pero extremos (p. ej. 209%) debido al efecto de una única cuenta cambiando de MRR. Documentado explícitamente en el modelo: el NRR agregado a nivel de toda la tabla (~100.4%) es la lectura fiable; los cortes muy finos son ruido esperado de tamaño de muestra, no una señal de negocio real.
 
+### 5. Contratos de modelo en los marts finales
+`mart_retention_monthly` y `mart_churn_profile` tienen `contract: enforced: true`, con tipos de dato declarados explícitamente por columna. Al aplicar el contrato, se detectó que DuckDB ampliaba automáticamente algunos tipos en tiempo de ejecución (`TIMESTAMP` en vez de `DATE` al sumar intervalos de fecha; `HUGEINT` en vez de `BIGINT` en agregaciones `SUM()`). Se añadieron casts explícitos en el SQL para que el tipo declarado en el contrato coincidiera exactamente con el tipo real, garantizando que cualquier consumidor (dashboard o capa de IA) reciba siempre el esquema esperado sin sorpresas.
+
 ## Cómo correrlo
 
 ```bash
