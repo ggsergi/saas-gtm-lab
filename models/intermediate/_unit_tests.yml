@@ -1,0 +1,21 @@
+unit_tests:
+  - name: unittest_int_subscriptions_monthly_scd_latest_wins
+    description: >
+      SCD resolution: when an account has two subscriptions covering the
+      same month, both with a NULL end_date but different start_date, the
+      model must keep only the row with the most recent start_date as
+      "current" for that month - not sum both MRR values, and not keep the
+      older row (see model description for the 8x overstatement finding
+      that motivated this choice).
+    model: int_subscriptions_monthly
+    overrides:
+      vars:
+        retention_as_of_date: '2024-03-31'
+    given:
+      - input: ref('stg_ravenstack__subscriptions')
+        rows:
+          - {account_id: 'A-TEST', subscription_id: 'S-OLD', start_date: '2024-03-05', end_date: null, mrr_amount: 100}
+          - {account_id: 'A-TEST', subscription_id: 'S-NEW', start_date: '2024-03-20', end_date: null, mrr_amount: 500}
+    expect:
+      rows:
+        - {month_start: '2024-03-01', account_id: 'A-TEST', subscription_id: 'S-NEW', mrr_amount: 500}

@@ -5,3 +5,18 @@ ravenstack:
       path: ravenstack.duckdb
       threads: 4
   target: dev
+
+# edr (Elementary CLI) always looks for a profile literally named
+# "elementary", regardless of the dbt project's own profile name - it
+# points at the same local DuckDB file so it can read the tables built by
+# `dbt run --select elementary`. Path MUST be absolute: edr runs its
+# internal dbt package from its own package directory, so a relative path
+# here resolves against that directory instead of this project's, silently
+# creating a fresh empty .duckdb file elsewhere.
+elementary:
+  outputs:
+    dev:
+      type: duckdb
+      path: 'C:/Users/sgilg/Documents/dbt/dbt-saas/ravenstack.duckdb'
+      threads: 4
+  target: dev

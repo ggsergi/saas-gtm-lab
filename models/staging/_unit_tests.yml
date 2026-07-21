@@ -1,0 +1,21 @@
+unit_tests:
+  - name: unittest_stg_feature_usage_composite_key
+    description: >
+      The primary key of feature_usage is the composite (usage_id,
+      subscription_id), not usage_id alone (see model description for why).
+      Asserts that two rows sharing usage_id but with different
+      subscription_id are kept as distinct rows, while a true duplicate
+      (same usage_id AND same subscription_id) is not collapsed either -
+      the staging model performs no deduplication of any kind.
+    model: stg_ravenstack__feature_usage
+    given:
+      - input: ref('feature_usage')
+        rows:
+          - {usage_id: 'U-001', subscription_id: 'S-A'}
+          - {usage_id: 'U-001', subscription_id: 'S-A'}
+          - {usage_id: 'U-001', subscription_id: 'S-B'}
+    expect:
+      rows:
+        - {usage_id: 'U-001', subscription_id: 'S-A'}
+        - {usage_id: 'U-001', subscription_id: 'S-A'}
+        - {usage_id: 'U-001', subscription_id: 'S-B'}
