@@ -11,6 +11,7 @@ Built as directed practice for a **GTM Analytics Engineer** role — the goal wa
 - **Environment management:** uv
 - **Tests:** dbt_utils + dbt_expectations
 - **Source dataset:** [RavenStack Synthetic SaaS Dataset](https://www.kaggle.com/datasets/rivalytics/saas-subscription-and-churn-analytics-dataset) (River @ Rivalytics) — 5 relational tables: accounts, subscriptions, feature_usage, support_tickets, churn_events
+- **Observability:** Elementary (dbt package + `edr` CLI) — local test/model monitoring dashboard
 
 ## Architecture
 
@@ -23,6 +24,9 @@ models/
     stg_ravenstack__feature_usage.sql
     stg_ravenstack__support_tickets.sql
     stg_ravenstack__churn_events.sql
+intermediate/
+    int_subscriptions_monthly.sql     → monthly snapshot of the active subscription
+    _unit_tests.yml                   → SCD "latest start wins" unit test
   marts/
     dim_accounts.sql
     fct_subscriptions.sql
@@ -34,7 +38,7 @@ models/
     mart_churn_profile.sql            → churn profile by reason_code and prior downgrade
 ```
 
-60 tests in total (dbt_utils + dbt_expectations), including `unique`, `not_null`, `relationships`, `accepted_values`, `equal_rowcount` and value-range checks.
+60 data tests (dbt_utils + dbt_expectations), including `unique`, `not_null`, `relationships`, `accepted_values`, `equal_rowcount` and value-range checks — plus 2 native dbt unit tests protecting specific business-logic decisions (see section 6 below).
 
 ## Modeling decisions and real findings
 
@@ -55,6 +59,18 @@ At the month × industry × country × plan_tier level, very small cohorts (a si
 ### 5. Model contracts on the final marts
 `mart_retention_monthly` and `mart_churn_profile` have `contract: enforced: true`, with data types explicitly declared per column. Applying the contract revealed that DuckDB was automatically widening some types at runtime (`TIMESTAMP` instead of `DATE` when adding date intervals; `HUGEINT` instead of `BIGINT` on `SUM()` aggregations). Explicit casts were added in the SQL so the declared contract type matched the actual runtime type exactly, guaranteeing that any consumer (dashboard or AI layer) always receives the expected schema without surprises.
 
+### 6. Native dbt unit tests protecting key modeling decisions
+Two `unit_tests` (dbt's native given/expect framework, testing SQL logic 
+against static toy data rather than the warehouse) guard the two riskiest 
+decisions above from silent regressions:
+- `unittest_stg_feature_usage_composite_key` — asserts the staging model 
+  never collapses or merges rows by `usage_id` alone, protecting the 
+  composite-key decision in finding #1.
+- `unittest_int_subscriptions_monthly_scd_latest_wins` — asserts that when 
+  two subscriptions cover the same month, the model keeps only the most 
+  recent `start_date`, not the sum of both MRR values, protecting the 8x 
+  overstatement finding in #2.
+  
 ## How to run it
 
 ```bash
@@ -65,6 +81,8 @@ DBT_PROFILES_DIR=. uv run dbt run
 DBT_PROFILES_DIR=. uv run dbt test
 DBT_PROFILES_DIR=. uv run dbt docs generate
 DBT_PROFILES_DIR=. uv run dbt docs serve
+DBT_PROFILES_DIR=. uv run dbt test --select test_type:unit
+DBT_PROFILES_DIR=. uv run edr report --profiles-dir . --project-dir .
 ```
 
 ## Context
